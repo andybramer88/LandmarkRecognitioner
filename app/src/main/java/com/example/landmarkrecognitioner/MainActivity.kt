@@ -36,6 +36,25 @@ import com.example.landmarkrecognitioner.presentation.CameraPreview
 import com.example.landmarkrecognitioner.presentation.LandmarkImageAnalyzer
 import com.example.landmarkrecognitioner.ui.theme.LandmarkRecognitionerTheme
 
+// ergänzte Importe
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.TextUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import retrofit2.Response
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,18 +68,38 @@ class MainActivity : ComponentActivity() {
                 var classifications by remember {
                     mutableStateOf(emptyList<Classification>())
                 }
+
+                // Wikipedia Api
+                var wikiSummary by remember { mutableStateOf("") }
+                var wikiLoading by remember { mutableStateOf(false) }
+                var wikiTerm by remember { mutableStateOf("") }
+                val context = LocalContext.current
+
                 val analyzer = remember {
                     LandmarkImageAnalyzer(
                         classifier = TfLiteLandmarkClassifier(
-                            context = applicationContext
+                            context = context.applicationContext  // ← context statt applicationContext
                         ),
-                        onResults = {
-                            classifications = it
+                        onResults = { classificationsList ->
+                            classifications = classificationsList
+                            if (classificationsList.isNotEmpty()) {
+                                wikiTerm = classificationsList.first().name
+                            }
                         }
                     )
                 }
+
+                // Load Wikipedia summary when wikiTerm changes
+                LaunchedEffect(wikiTerm) {
+                    if (wikiTerm.isNotEmpty()) {
+                        loadWikipediaSummary(wikiTerm) { summary ->
+                            wikiSummary = summary
+                        }
+                    }
+                }
+
                 val controller = remember {
-                    LifecycleCameraController(applicationContext).apply {
+                    LifecycleCameraController(context.applicationContext).apply {
                         setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
                         setImageAnalysisAnalyzer(
                             ContextCompat.getMainExecutor(applicationContext),
@@ -92,10 +131,57 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+
+                    // Wikipedia summary card at the bottom
+                    if (wikiSummary.isNotEmpty()) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "Wikipedia Summary",
+                                    fontSize = 18.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                                Text(
+                                    text = wikiSummary,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
+
+    private fun loadWikipediaSummary(term: String, onResult: (String) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val response = RetrofitClient.wikipediaApi.getPageSummary(term)
+                if (response.isSuccessful) {
+                    val summary = response.body()?.extract ?: "Keine Zusammenfassung gefunden"
+                    onResult(summary)
+                } else {
+                    onResult("Artikel '$term' nicht gefunden")
+                }
+            } catch (e: Exception) {
+                onResult("Fehler: ${e.message}")
+            }
+        }
+    }
+
+
 
     private fun hasCameraPermission() = ContextCompat.checkSelfPermission(
         this, android.Manifest.permission.CAMERA
